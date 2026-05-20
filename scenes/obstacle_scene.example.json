@@ -1,0 +1,81 @@
+{
+  "reference_frame": {
+    "name": "robot_base",
+    "origin_xyz": [0.0, 0.0, 0.0],
+    "position_unit": "millimeters",
+    "angle_unit": "radians",
+    "description": "All obstacle poses are expressed in the robot base frame."
+  },
+  "value_units": {
+    "position_xyz": "millimeters",
+    "obstacle_dimensions": "millimeters"
+  },
+  "obstacles": [
+    {
+      "type": "box",
+      "id": "goal_container_floor",
+      "center_xyz": [-1231.081, 0.0, 0.5],
+      "size_xyz": [262.162, 511.162, 1.0],
+      "safety_margin": 6.0,
+      "metadata": {
+        "source": "front_bottom_midpoint_absolute",
+        "description": "Bottom floor plate. The front opening-side lowest midpoint is fixed at (-1100, 0, 0) mm."
+      }
+    },
+    {
+      "type": "box",
+      "id": "goal_container_top",
+      "center_xyz": [-1231.081, 0.0, 461.662],
+      "size_xyz": [262.162, 511.162, 1.0],
+      "safety_margin": 6.0,
+      "metadata": {
+        "source": "front_bottom_midpoint_absolute",
+        "description": "Top plate"
+      }
+    },
+    {
+      "type": "box",
+      "id": "goal_container_back_wall",
+      "center_xyz": [-1362.162, 0.0, 231.081],
+      "size_xyz": [1.0, 511.162, 462.162],
+      "safety_margin": 6.0,
+      "metadata": {
+        "source": "front_bottom_midpoint_absolute",
+        "description": "Back wall"
+      }
+    },
+    {
+      "type": "box",
+      "id": "goal_container_left_wall",
+      "center_xyz": [-1231.081, 255.581, 231.081],
+      "size_xyz": [262.162, 1.0, 462.162],
+      "safety_margin": 6.0,
+      "metadata": {
+        "source": "front_bottom_midpoint_absolute",
+        "description": "Left wall"
+      }
+    },
+    {
+      "type": "box",
+      "id": "goal_container_right_wall",
+      "center_xyz": [-1231.081, -255.581, 231.081],
+      "size_xyz": [262.162, 1.0, 462.162],
+      "safety_margin": 6.0,
+      "metadata": {
+        "source": "front_bottom_midpoint_absolute",
+        "description": "Right wall"
+      }
+    },
+    {
+      "type": "box",
+      "id": "goal_container_front_baffle",
+      "center_xyz": [-1100.0, 0.0, 105.0],
+      "size_xyz": [1.0, 551.162, 208.0],
+      "safety_margin": 6.0,
+      "metadata": {
+        "source": "front_bottom_midpoint_absolute",
+        "description": "Small opening-side baffle connected to the floor plate"
+      }
+    }
+  ]
+}
