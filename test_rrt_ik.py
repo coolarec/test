@@ -37,18 +37,29 @@ def parse_args() -> argparse.Namespace:
         "--pregrasp-distance-mm",
         type=float,
         default=DEFAULT_PREGRASP_DISTANCE_MM,
-        help="Distance from target pose back along tool Z axis, in millimeters. Ignored if request JSON has pre_grasp_pose_6d.",
+        help="Distance from target pose back along the default tool axis, in millimeters. Ignored if request JSON has pre_grasp_pose_6d.",
     )
+    parser.add_argument("--request-json", type=Path, default=DEFAULT_REQUEST_JSON, help="Planning request JSON.")
+    parser.add_argument("--scene-json", type=Path, default=DEFAULT_SCENE_JSON, help="Obstacle scene JSON.")
+    parser.add_argument("--goal-sample-rate", type=float, default=RRT_GOAL_SAMPLE_RATE, help="RRT goal sample probability.")
+    parser.add_argument("--max-iterations", type=int, default=RRT_MAX_ITERATIONS, help="RRT maximum iterations.")
+    parser.add_argument("--smooth-iterations", type=int, default=RRT_SMOOTHING_ITERATIONS, help="RRT shortcut smoothing iterations.")
     parser.add_argument(
         "--allow-approximate-ik",
         action="store_true",
         default=ALLOW_APPROXIMATE_IK,
-        help="Let RRT plan to the best IK result even when the current model cannot exactly reach the requested 6D pose.",
+        help="Allow planning to approximate IK result when exact IK fails.",
     )
-    parser.add_argument("--goal-sample-rate", type=float, default=RRT_GOAL_SAMPLE_RATE, help="Probability of sampling the IK goal in RRT.")
-    parser.add_argument("--max-iterations", type=int, default=RRT_MAX_ITERATIONS, help="Maximum RRT expansion iterations.")
-    parser.add_argument("--smooth-iterations", type=int, default=RRT_SMOOTHING_ITERATIONS, help="Shortcut smoothing iterations after RRT succeeds.")
     return parser.parse_args()
+
+
+def interpolate_joint_path(start: np.ndarray, goal: np.ndarray, frame_count: int = 30) -> list[np.ndarray]:
+    # 简单的关节空间线性插值工具，保留给临时调试用。
+    # 正式输出 GIF 时不使用它，避免把未经碰撞验证的路径误认为 RRT 成功。
+    return [
+        start + alpha * (goal - start)
+        for alpha in np.linspace(0.0, 1.0, frame_count)
+    ]
 
 
 def make_reachable_target_pose(pregrasp_joint_angles: np.ndarray, pregrasp_distance: float = 0.0) -> Pose6D:
@@ -162,22 +173,22 @@ def set_axes_equal(ax) -> None:
 
 def main() -> None:
     # main() 就是整个示例的主流程：
-    # 1. 从 path/inputs 读取起点和目标点
-    # 2. 从 path/scenes 读取障碍物环境
+    # 1. 从 inputs 读取起点和目标点
+    # 2. 从 scenes 读取障碍物环境
     # 3. 计算预抓取点和 IK
     # 4. 用 RRT 规划
     # 5. 把结果画出来
 
     args = parse_args()
     pregrasp_distance_m = args.pregrasp_distance_mm / 1000.0
-    request = load_planning_request(DEFAULT_REQUEST_JSON)
-    scene = load_scene_model(DEFAULT_SCENE_JSON)
+    request = load_planning_request(args.request_json)
+    scene = load_scene_model(args.scene_json)
     target_pose = request.goal_pose
     start_angles = request.start_joint_angles
     obstacles = scene.obstacles
     pregrasp_pose = request.pre_grasp_pose or make_pregrasp_pose(target_pose, distance=pregrasp_distance_m)
 
-    print("Request source:", DEFAULT_REQUEST_JSON)
+    print("Request source:", args.request_json)
     print("Start joints(rad):", np.round(start_angles, 4))
     print(
         "Target pose(m/rad):",
@@ -202,16 +213,18 @@ def main() -> None:
     )
     print("Saved 3D scene:", scene_output_path)
 
-    # 当前把预抓取点和目标点的距离设为 0，用 IK 转成目标关节角。
+    # 用 IK 把“法兰预抓取点 6D 位姿”转成目标关节角。
+    # 注意：这里的 6D pose 不包含 30cm 爪子；爪子只在碰撞检测和显示时额外加上。
     ik_result = inverse_kinematics(pregrasp_pose, initial_angles=start_angles, obstacles=obstacles)
     # 这里打印的是 IK 是否成功，以及最终误差是否足够小。
     print("IK success:", ik_result.success)
     print("IK joint angles(rad):", np.round(ik_result.joint_angles, 4))
     print("IK position error:", round(ik_result.position_error, 6))
     print("IK orientation error:", round(ik_result.orientation_error, 6))
-    if not ik_result.success and not args.allow_approximate_ik:
-        animation_output_path.unlink(missing_ok=True)
-        print("IK failed for the JSON target. No GIF was generated because there is no verified RRT path.")
+    if not ik_result.success:
+        if animation_output_path.exists():
+            animation_output_path.unlink()
+        print("No GIF was generated because IK did not solve the requested flange pregrasp pose.")
         return
 
     # RRT 类只负责规划；画图和测试逻辑都留在这个文件里。
@@ -228,11 +241,12 @@ def main() -> None:
             obstacles,
             start_angles=start_angles,
             pregrasp_distance=pregrasp_distance_m,
-            pregrasp_pose=pregrasp_pose,
+            pregrasp_pose=request.pre_grasp_pose,
             allow_approximate_ik=args.allow_approximate_ik,
         )
     except RuntimeError as error:
-        animation_output_path.unlink(missing_ok=True)
+        if animation_output_path.exists():
+            animation_output_path.unlink()
         print(f"RRT failed for the JSON target: {error}")
         print("No GIF was generated because there is no collision-verified RRT path.")
         return

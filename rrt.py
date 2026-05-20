@@ -7,7 +7,15 @@ from typing import Sequence
 
 import numpy as np
 
-from ik import DEFAULT_DH_LINKS, DHLink, Pose6D, forward_kinematics_chain, inverse_kinematics, pose_to_transform
+from config import (
+    GRIPPER_AXIS_LOCAL,
+    GRIPPER_LENGTH_M,
+    GRIPPER_RADIUS_M,
+    GRIPPER_SAMPLE_RESOLUTION_M,
+    ROBOT_LINK_RADIUS_M,
+    ROBOT_LINK_SAMPLE_RESOLUTION_M,
+)
+from ik import DEFAULT_DH_LINKS, DHLink, Pose6D, inverse_kinematics, pose_to_transform, robot_collision_points
 from obstacles import Obstacle
 
 
@@ -70,6 +78,18 @@ class RRTPlanner:
         # 路径找到后做 shortcut 平滑的次数。次数越多，路径节点通常越少。
         rng_seed: int | None = 7,
         # 随机种子。固定后每次运行更容易复现实验结果。
+        link_radius: float = ROBOT_LINK_RADIUS_M,
+        # 连杆简化碰撞半径。当前没有精确外形时可保持 0，只靠 safety_margin 留余量。
+        link_sample_resolution: float = ROBOT_LINK_SAMPLE_RESOLUTION_M,
+        # 连杆中心线空间采样间距，单位 m。
+        tool_length: float = GRIPPER_LENGTH_M,
+        # 法兰后附加爪子长度，单位 m。输入 6D pose 仍然是法兰，不含这个长度。
+        tool_axis_local: Sequence[float] = GRIPPER_AXIS_LOCAL,
+        # 爪子从法兰局部哪个方向伸出。默认是 CS612A 法兰局部 -Y 方向。
+        tool_radius: float = GRIPPER_RADIUS_M,
+        # 爪子简化碰撞半径，单位 m。未知时可设 0，实际由 safety_margin 保守放大。
+        tool_sample_resolution: float = GRIPPER_SAMPLE_RESOLUTION_M,
+        # 爪子线段空间采样间距，单位 m。
     ) -> None:
         # RRT 在关节空间里搜索，每个节点保存一组 6 维关节角。
         # 所以它规划的不是笛卡尔空间直线，而是“关节角怎样一步步变化到目标”。
@@ -87,6 +107,12 @@ class RRTPlanner:
         self.safety_margin = safety_margin
         self.smoothing_iterations = smoothing_iterations
         self.rng = random.Random(rng_seed)
+        self.link_radius = link_radius
+        self.link_sample_resolution = link_sample_resolution
+        self.tool_length = tool_length
+        self.tool_axis_local = tuple(tool_axis_local)
+        self.tool_radius = tool_radius
+        self.tool_sample_resolution = tool_sample_resolution
 
     def plan(
         self,
@@ -107,7 +133,7 @@ class RRTPlanner:
         # 这里要求调用方显式传入 Obstacle 对象，避免混用旧格式。
         normalized_obstacles = list(obstacles)
         # path/inputs 如果直接给了 pre_grasp_pose_6d，就使用文件里的预抓取点；
-        # 否则按抓取点末端 Z 轴反向退 pregrasp_distance 自动生成。
+        # 否则按法兰默认工具方向的反方向退 pregrasp_distance 自动生成。
         if pregrasp_pose is None:
             pregrasp_pose = make_pregrasp_pose(target_pose, pregrasp_distance)
 
@@ -119,6 +145,9 @@ class RRTPlanner:
             dh_links=self.dh_links,
             obstacles=normalized_obstacles,
             obstacle_margin=self.safety_margin,
+            tool_length=self.tool_length,
+            tool_axis_local=self.tool_axis_local,
+            tool_sample_resolution=self.tool_sample_resolution,
         )
         if not ik_result.success and not allow_approximate_ik:
             raise RuntimeError(
@@ -222,15 +251,23 @@ class RRTPlanner:
 
     def _in_collision(self, joint_angles: np.ndarray, obstacles: Sequence[Obstacle]) -> bool:
         """Check whether the joint chain collides with any supported obstacle."""
-        # 这里把每个关节原点和末端点都拿出来做简化检查，
-        # 这样比只看末端点更接近真实机械臂避障。
-        chain_transforms = forward_kinematics_chain(joint_angles, self.dh_links)
-        for transform in chain_transforms:
-            point = transform[:3, 3]
+        # 碰撞检查的模型是“机械臂中心线 + 法兰后 30cm 爪子”。
+        # 输入 goal/pregrasp pose 仍是法兰位姿；爪子在这里额外补上，避免规划出爪子穿障碍物的路径。
+        collision_points = robot_collision_points(
+            joint_angles,
+            dh_links=self.dh_links,
+            link_sample_resolution=self.link_sample_resolution,
+            tool_length=self.tool_length,
+            tool_axis_local=self.tool_axis_local,
+            tool_sample_resolution=self.tool_sample_resolution,
+        )
+        for point in collision_points:
             for obstacle in obstacles:
                 # 碰撞阈值 = 规划器全局安全距离 + 障碍物 JSON 自己带的安全距离。
                 # 例如场景文件里 safety_margin=6.0 且单位是 mm，读入后就是 0.006m。
-                if obstacle.signed_distance(point) <= self.safety_margin + obstacle.safety_margin:
+                # 连杆/爪子半径目前按点所在段粗略处理；未知外形时默认 0。
+                robot_radius = max(self.link_radius, self.tool_radius)
+                if obstacle.signed_distance(point) <= self.safety_margin + obstacle.safety_margin + robot_radius:
                     return True
         return False
 

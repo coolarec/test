@@ -25,7 +25,8 @@ def pose_to_output_dict(pose: Pose6D) -> dict[str, float]:
 
 
 def joint_angles_to_pose(joint_angles: Sequence[float]) -> Pose6D:
-    # RRT 路径里存的是 6 个关节角；这里用正运动学 FK 转成末端 6D 位姿。
+    # RRT 路径里存的是 6 个关节角；这里用正运动学 FK 转成法兰 6D 位姿。
+    # 这里的“法兰”就是输入 JSON 的 6D pose 所描述的位置，不包含额外 30cm 爪子。
     return transform_to_pose(forward_kinematics(joint_angles))
 
 
@@ -36,6 +37,7 @@ def build_rrt_trajectory_payload(
 ) -> dict:
     # rrt_stage_waypoints_6d 是你刚才贴的那种 index + pose 列表。
     # rrt_stage_joint_path 额外保留每个路径点的 6 个关节角，方便真正执行 movej。
+    # 注意：pose 字段表示法兰，不包含 30cm 爪子。
     pose_path = [joint_angles_to_pose(joints) for joints in joint_path]
     return {
         "value_units": {
@@ -48,6 +50,9 @@ def build_rrt_trajectory_payload(
             "origin_xyz": [0.0, 0.0, 0.0],
             "position_unit": "millimeters",
             "angle_unit": "radians",
+        },
+        "pose_meaning": {
+            "pose": "robot flange pose, excluding the 30cm gripper",
         },
         "goal_pose_6d": pose_to_output_dict(goal_pose),
         "pre_grasp_pose_6d": pose_to_output_dict(pregrasp_pose),

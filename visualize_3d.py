@@ -10,7 +10,8 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from ik import Pose6D, forward_kinematics_chain, pose_to_transform
+from config import GRIPPER_AXIS_LOCAL, GRIPPER_LENGTH_M
+from ik import Pose6D, forward_kinematics_chain, pose_to_transform, tool_tip_transform_from_flange
 from obstacles import Obstacle
 
 
@@ -151,7 +152,9 @@ def _draw_robot_arm(ax, joint_angles: Sequence[float]) -> None:
     for index, point in enumerate(points):
         ax.text(point[0], point[1], point[2], f"J{index}", fontsize=8)
 
-    _draw_pose_frame(ax, chain[-1], axis_length=0.08, label_prefix="末端")
+    flange_transform = chain[-1]
+    _draw_gripper(ax, flange_transform)
+    _draw_pose_frame(ax, flange_transform, axis_length=0.08, label_prefix="法兰")
 
 
 def _draw_obstacles(ax, obstacles: Sequence[Obstacle]) -> None:
@@ -173,13 +176,15 @@ def _draw_obstacles(ax, obstacles: Sequence[Obstacle]) -> None:
 
 
 def _draw_target_nodes(ax, target_pose: Pose6D, pregrasp_pose: Pose6D | None) -> None:
-    # 绿色点是最终抓取目标；蓝色点是 RRT 先规划到的预抓取点。
-    ax.scatter(target_pose.x, target_pose.y, target_pose.z, c="green", s=90, label="目标点")
+    # 绿色点是最终法兰目标；蓝色点是 RRT 先规划到的法兰预抓取点。
+    # 当前项目约定：JSON 里的 6D pose 是不含 30cm 爪子的法兰位姿。
+    ax.scatter(target_pose.x, target_pose.y, target_pose.z, c="green", s=90, label="法兰目标点")
     target_transform = pose_to_transform(target_pose)
     _draw_pose_frame(ax, target_transform, axis_length=0.07, label_prefix="目标")
+    _draw_gripper(ax, target_transform, label="目标处30cm爪子")
 
     if pregrasp_pose is not None:
-        ax.scatter(pregrasp_pose.x, pregrasp_pose.y, pregrasp_pose.z, c="dodgerblue", s=90, label="预抓取点")
+        ax.scatter(pregrasp_pose.x, pregrasp_pose.y, pregrasp_pose.z, c="dodgerblue", s=90, label="法兰预抓取点")
         ax.plot(
             [pregrasp_pose.x, target_pose.x],
             [pregrasp_pose.y, target_pose.y],
@@ -187,13 +192,16 @@ def _draw_target_nodes(ax, target_pose: Pose6D, pregrasp_pose: Pose6D | None) ->
             "--",
             color="gray",
             linewidth=1.5,
-            label="最后靠近段",
+            label="法兰最后靠近段",
         )
+        _draw_gripper(ax, pose_to_transform(pregrasp_pose), label="预抓取处30cm爪子")
 
 
 def _draw_end_effector_path(ax, path: Sequence[np.ndarray]) -> None:
-    # path 是一串关节角，不是空间坐标；画之前要先用正运动学转成末端点。
-    positions = np.array([forward_kinematics_chain(joints)[-1][:3, 3] for joints in path], dtype=float)
+    # path 是一串关节角，不是空间坐标；画之前要先用正运动学转成法兰点。
+    # 橙线是 JSON/IK 使用的法兰轨迹，不包含 30cm 爪子。
+    flange_transforms = [forward_kinematics_chain(joints)[-1] for joints in path]
+    positions = np.array([transform[:3, 3] for transform in flange_transforms], dtype=float)
     ax.plot(
         positions[:, 0],
         positions[:, 1],
@@ -201,8 +209,52 @@ def _draw_end_effector_path(ax, path: Sequence[np.ndarray]) -> None:
         "-",
         color="orange",
         linewidth=2,
-        label="末端轨迹",
+        label="法兰轨迹",
     )
+    if GRIPPER_LENGTH_M > 0.0:
+        tip_positions = np.array(
+            [
+                tool_tip_transform_from_flange(
+                    transform,
+                    tool_length=GRIPPER_LENGTH_M,
+                    axis_local=GRIPPER_AXIS_LOCAL,
+                )[:3, 3]
+                for transform in flange_transforms
+            ],
+            dtype=float,
+        )
+        ax.plot(
+            tip_positions[:, 0],
+            tip_positions[:, 1],
+            tip_positions[:, 2],
+            "--",
+            color="purple",
+            linewidth=1.8,
+            label="爪尖轨迹",
+        )
+
+
+def _draw_gripper(ax, flange_transform: np.ndarray, label: str = "30cm爪子") -> None:
+    # 机械臂 FK 到这里结束于法兰；这个函数再从法兰沿默认工具方向画出 30cm 爪子。
+    if GRIPPER_LENGTH_M <= 0.0:
+        return
+
+    flange_position = flange_transform[:3, 3]
+    tip_position = tool_tip_transform_from_flange(
+        flange_transform,
+        tool_length=GRIPPER_LENGTH_M,
+        axis_local=GRIPPER_AXIS_LOCAL,
+    )[:3, 3]
+    ax.plot(
+        [flange_position[0], tip_position[0]],
+        [flange_position[1], tip_position[1]],
+        [flange_position[2], tip_position[2]],
+        "-",
+        color="purple",
+        linewidth=3,
+        label=label,
+    )
+    ax.scatter(tip_position[0], tip_position[1], tip_position[2], c="purple", s=35)
 
 
 def _draw_sphere(ax, center: np.ndarray, radius: float) -> None:
@@ -313,10 +365,34 @@ def _scene_points_for_limits(
     for joints in path:
         chain = forward_kinematics_chain(joints)
         points.extend(transform[:3, 3] for transform in chain)
+        if GRIPPER_LENGTH_M > 0.0:
+            points.append(
+                tool_tip_transform_from_flange(
+                    chain[-1],
+                    tool_length=GRIPPER_LENGTH_M,
+                    axis_local=GRIPPER_AXIS_LOCAL,
+                )[:3, 3]
+            )
 
     points.append(np.array([target_pose.x, target_pose.y, target_pose.z], dtype=float))
+    if GRIPPER_LENGTH_M > 0.0:
+        points.append(
+            tool_tip_transform_from_flange(
+                pose_to_transform(target_pose),
+                tool_length=GRIPPER_LENGTH_M,
+                axis_local=GRIPPER_AXIS_LOCAL,
+            )[:3, 3]
+        )
     if pregrasp_pose is not None:
         points.append(np.array([pregrasp_pose.x, pregrasp_pose.y, pregrasp_pose.z], dtype=float))
+        if GRIPPER_LENGTH_M > 0.0:
+            points.append(
+                tool_tip_transform_from_flange(
+                    pose_to_transform(pregrasp_pose),
+                    tool_length=GRIPPER_LENGTH_M,
+                    axis_local=GRIPPER_AXIS_LOCAL,
+                )[:3, 3]
+            )
 
     for obstacle in obstacles:
         points.append(np.array([obstacle.pose.x, obstacle.pose.y, obstacle.pose.z], dtype=float))

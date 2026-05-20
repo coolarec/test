@@ -1,0 +1,32 @@
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+outputs/
+
+# macOS/editor noise
+.DS_Store
+*.swp
+*.swo
+
+# Generated planning artifacts
+outputs/
+generated_rrt_motion.script
+rrt_trajectory_output.json
+rrt_3d_animation.gif
+rrt_3d_scene.png
+rrt_ik_path.png
+
+# Local archives/extracted reference text
+*.zip
+*.rar
+manual.txt
+__pycache__/config.cpython-314.pyc

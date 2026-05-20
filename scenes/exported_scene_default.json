@@ -49,7 +49,7 @@
       "id": "goal_container_left_wall",
       "center_xyz": [-1112.162, 175.419, 231.081],
       "size_xyz": [262.162, 10.0, 462.162],
-      "safety_margin": 150,
+      "safety_margin": 150.0,
       "metadata": {
         "source": "user_box_params",
         "description": "长方体盒子左侧壁。"
@@ -60,7 +60,7 @@
       "id": "goal_container_right_wall",
       "center_xyz": [-1112.162, -335.743, 231.081],
       "size_xyz": [262.162, 10.0, 462.162],
-      "safety_margin": 150,
+      "safety_margin": 150.0,
       "metadata": {
         "source": "user_box_params",
         "description": "长方体盒子右侧壁。"
